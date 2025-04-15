@@ -38,7 +38,7 @@ jobs:
           cat signature.txt
 
       - name: Upload extracted signature
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v3
         with:
           name: extracted-signature
           path: signature.txt
