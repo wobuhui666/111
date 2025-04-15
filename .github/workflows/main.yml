@@ -1,44 +1,110 @@
-name: Extract APK Signature
+name: Get APK Signature from URL (从URL获取APK签名)
 
+# 允许从 GitHub Actions 标签页手动触发
 on:
-  push:
-    branches:
-      - main  # 或你希望触发的分支
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: '要下载并检查签名的APK文件的URL'
+        required: true
+        # 默认使用你提供的 URL
+        default: 'https://raw.githubusercontent.com/FongMi/Release/refs/heads/okjack/apk/release/leanback-arm64_v8a.apk'
 
 jobs:
-  extract-signature:
-    runs-on: ubuntu-latest
+  extract_signature:
+    runs-on: ubuntu-latest # 使用标准 Linux 运行环境
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
+      # 检出仓库代码 - 虽然APK是下载的，但工作流文件本身在仓库中，所以通常保留此步骤
+      - name: Checkout Repository (检出仓库代码)
+        uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v2
+      # 安装 Java 环境 - Android SDK 工具需要 Java
+      - name: Set up Java (安装Java环境)
+        uses: actions/setup-java@v4
         with:
-          java-version: '11'  # 使用适合你的项目的 Java 版本
+          distribution: 'temurin'
+          java-version: '17' # 使用与最新 Android SDK 工具兼容的版本
 
-      - name: Install dependencies
+      # 安装 Android SDK - 包含 apksigner 工具
+      - name: Set up Android SDK (安装Android SDK)
+        uses: android-actions/setup-android@v3
+
+      # 新增步骤：从 URL 下载 APK
+      - name: Download APK from URL (从URL下载APK)
+        id: download-apk
         run: |
-          sudo apt update
-          sudo apt install -y openjdk-11-jdk
-          sudo apt install -y unzip
+          APK_URL="${{ inputs.apk_url }}"
+          # 定义下载后保存的文件名
+          DOWNLOAD_PATH="downloaded_app.apk"
+          echo "开始从 ${APK_URL} 下载 APK..."
+          # 使用 curl 下载:
+          # -L: 跟随重定向
+          # -f: 在遇到 HTTP 错误时静默失败 (返回非零退出码)
+          # -o: 指定输出文件路径
+          curl -Lfo "${DOWNLOAD_PATH}" "${APK_URL}"
 
-      - name: Extract APK Signature
+          # 检查 curl 命令是否成功执行
+          if [ $? -ne 0 ]; then
+            echo "::error::下载 APK 失败，请检查 URL: ${APK_URL}"
+            exit 1
+          fi
+
+          # 进一步检查文件是否存在且大小不为零
+          if [ ! -s "${DOWNLOAD_PATH}" ]; then
+             echo "::error::下载的文件为空或不存在: ${DOWNLOAD_PATH}"
+             exit 1
+          fi
+
+          echo "APK 已成功下载到: ${DOWNLOAD_PATH}"
+
+      # 验证下载的 APK 并打印证书信息
+      - name: Verify APK and Print Certificate Info (验证APK并打印证书信息)
+        id: apk-verify
         run: |
-          # 将APK文件下载到工作环境中
-          curl -L -o your-app.apk https://raw.githubusercontent.com/FongMi/Release/refs/heads/okjack/apk/release/leanback-arm64_v8a.apk  # 适配实际路径
+          # 使用下载时指定的文件名
+          APK_FILE="downloaded_app.apk"
+          echo "开始使用 apksigner 验证下载的 APK: ${APK_FILE}"
 
-          # 获取 APK 签名
-          keytool -printcert -jarfile your-app.apk | grep "SHA-256" | awk '{print $2}' > signature.txt
+          if [ ! -f "${APK_FILE}" ]; then
+            echo "::error::找不到下载的 APK 文件: ${APK_FILE}"
+            exit 1
+          fi
 
-          # 打印签名 Base64
-          cat signature.txt
+          echo "运行 apksigner..."
+          # 执行 apksigner 命令并捕获输出
+          apksigner_output=$(apksigner verify --print-certs "${APK_FILE}")
 
-      - name: Upload extracted signature
-        uses: actions/upload-artifact@v4
-        with:
-          name: extracted-signature
-          path: signature.txt
+          # 检查 apksigner 命令是否成功
+          if [ $? -ne 0 ]; then
+             echo "::error::apksigner 命令执行失败。请检查下载的 APK 文件是否有效。"
+             exit 1
+          fi
+
+          echo "apksigner 命令成功执行。"
+          # 将可能的多行输出保存到环境变量，以便下一步骤使用
+          echo "APKSIGNER_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$apksigner_output" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      # 显示签名信息及操作指引
+      - name: Display Signature Information (显示签名信息)
+        run: |
+          echo "-----------------------------------------------------------------------"
+          echo " 'apksigner verify --print-certs' 的完整输出:"
+          echo "-----------------------------------------------------------------------"
+          echo "${{ env.APKSIGNER_OUTPUT }}"
+          echo "-----------------------------------------------------------------------"
+          echo " 操作指引 (中文):"
+          echo " 1. 请从上面的输出中手动复制所需的签名信息。"
+          echo " 2. 对于之前讨论的 ContextWrapper 方案，通常需要完整的证书字节。"
+          echo "    请查找类似 'Signer #1 certificate:' 的部分。"
+          echo "    证书数据通常会以多行的 Base64 编码块形式展示，有时会带有"
+          echo "    '-----BEGIN CERTIFICATE-----' 和 '-----END CERTIFICATE-----' 标记。"
+          echo " 3. 复制整个 Base64 编码块 (如果存在 BEGIN/END 标记，则复制它们之间的内容，"
+          echo "    即纯 Base64 字符)。然后在你的 Java/Kotlin 代码中，使用"
+          echo "    android.util.Base64.decode() 方法将其解码为字节数组 (byte[])，"
+          echo "    这个字节数组就可以用于构造 'new Signature(byteArray)'。"
+          echo " 4. 或者，记下输出中的 SHA-1 或 SHA-256 指纹 (digest)，如果你的校验逻辑是基于指纹的。"
+          echo "-----------------------------------------------------------------------"
+
