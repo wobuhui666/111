@@ -99,7 +99,8 @@ jobs:
 
           echo "运行 apksigner (现在应该能找到了)..."
           # 执行 apksigner 命令并捕获输出
-          apksigner_output=$(apksigner verify --print-certs "${APK_FILE}")
+          # 使用 --verbose 增加详细程度，并使用 --print-certs-pem 请求 PEM 格式输出 (包含 Base64)
+          apksigner_output=$(apksigner verify --verbose --print-certs-pem "${APK_FILE}")
 
           # 检查 apksigner 命令是否成功
           if [ $? -ne 0 ]; then
