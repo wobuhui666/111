@@ -1,0 +1,44 @@
+name: Extract APK Signature
+
+on:
+  push:
+    branches:
+      - main  # 或你希望触发的分支
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  extract-signature:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Setup Java
+        uses: actions/setup-java@v2
+        with:
+          java-version: '11'  # 使用适合你的项目的 Java 版本
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y openjdk-11-jdk
+          sudo apt install -y unzip
+
+      - name: Extract APK Signature
+        run: |
+          # 将APK文件下载到工作环境中
+          curl -L -o your-app.apk https://raw.githubusercontent.com/FongMi/Release/refs/heads/okjack/apk/release/leanback-arm64_v8a.apk  # 适配实际路径
+
+          # 获取 APK 签名
+          keytool -printcert -jarfile your-app.apk | grep "SHA-256" | awk '{print $2}' > signature.txt
+
+          # 打印签名 Base64
+          cat signature.txt
+
+      - name: Upload extracted signature
+        uses: actions/upload-artifact@v2
+        with:
+          name: extracted-signature
+          path: signature.txt
